@@ -117,6 +117,15 @@ int close_bar(void) {
 	return 0;
 }
 
+extern long (*STUB_test_call)(int);
+long test_call(int test) {
+    if (DEBUG) {
+        printk(KERN_INFO "test_call\n");
+    }
+
+    return test;
+}
+
 static int barstool_init(void) {
     if (DEBUG) {
         printk(KERN_INFO "barstool_init\n");
