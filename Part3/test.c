@@ -21,30 +21,32 @@ int test_call(int test) {
 }
 
 int main(int argc, char **argv) {
-    printf("type a command number, then the parameters\n1 for init bar (no params). 2 for cust arr (num type). 3 for close bar (no params). 4 for test call(num)\n");
-
     int cmd = atoi(argv[1]);
     int ret;
     switch (cmd) {
         case 1:
+            //printf("initializing bar...\n");
             ret = initialize_bar();
             break;
         case 2:
+            //printf("customer arrival...\n");
             ret = customer_arrival(atoi(argv[2]), atoi(argv[3]));
             break;
         case 3:
+            //printf("closing bar...\n");
             ret = close_bar();
             break;
         case 4:
+            //printf("test call...\n");
             ret = test_call(atoi(argv[2]));
             break;
         default:
     }
 
-    if (ret < 0)
-        perror("system call error");
+    /*if (ret < 0)
+        perror("system call error\n");
     else
-        printf("Function successful.");
+        printf("Function successful.\n");*/
 
     return 0;
 }
