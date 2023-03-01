@@ -98,7 +98,7 @@ static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_
     }
 
     if (DEBUG) {
-        sprintf(msg, "%sLast customer data:\n\ttime: %ld:%ld\n\t%c - %i\n", msg, last_customer.time_entered.tv_sec, last_customer.time_entered.tv_nsec, last_customer.type, last_customer.group_id);
+        sprintf(msg, "%sLast customer data:\n\tarrival: %ld:%ld\n\t%c - %i\n", msg, last_customer.time_entered.tv_sec, last_customer.time_entered.tv_nsec, last_customer.type, last_customer.group_id);
     }
 
     procfs_buf_len = strlen(msg);
@@ -225,6 +225,10 @@ static int barstool_init(void) {
     STUB_customer_arrival = customer_arrival;
     STUB_initialize_bar = initialize_bar;
     STUB_test_call = test_call;
+
+    last_customer.group_id = -1;
+    last_customer.type = 'X';
+
 
     current_table = -1;
     OPEN = false;
