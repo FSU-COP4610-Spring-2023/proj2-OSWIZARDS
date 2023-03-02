@@ -1,0 +1,1 @@
+cmd_/home/pc21d/Proj/demo/linux-5.15.94/SystemCalls/timer/Module.symvers := sed 's/\.ko$$/\.o/' /home/pc21d/Proj/demo/linux-5.15.94/SystemCalls/timer/modules.order | scripts/mod/modpost -m -a  -o /home/pc21d/Proj/demo/linux-5.15.94/SystemCalls/timer/Module.symvers -e -i Module.symvers   -T -

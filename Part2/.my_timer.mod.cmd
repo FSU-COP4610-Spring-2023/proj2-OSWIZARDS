@@ -1,0 +1,1 @@
+cmd_/home/pc21d/Proj/demo/linux-5.15.94/SystemCalls/timer/my_timer.mod := { echo  /home/pc21d/Proj/demo/linux-5.15.94/SystemCalls/timer/my_timer.o;  echo; } > /home/pc21d/Proj/demo/linux-5.15.94/SystemCalls/timer/my_timer.mod
