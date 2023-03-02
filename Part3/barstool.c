@@ -6,6 +6,7 @@
 #include <linux/timer.h>
 #include <linux/string.h>
 #include <linux/list.h>
+#include <linux/slab.h>
 
 MODULE_LICENSE("Dual BSD/GPL");
 
@@ -28,10 +29,23 @@ static int current_table,
     groups_encountered;
 
 typedef struct {
-    struct timespec64 time_entered;
+    struct timespec64 time;
     int group_id;
+    int group_count;
     char type;
+    struct list_head list;
 } Customer;
+
+/*
+typedef struct {
+    int group_id;
+    Customer gr[8];
+    int group_count;
+    char type;
+} Group; 
+*/
+
+struct list_head Queue = LIST_HEAD_INIT(Queue);
 
 typedef struct {
     Customer occupant;
@@ -42,6 +56,53 @@ static Customer last_customer;
 static Place stool[32];
 
 #define DEBUG 1
+
+int addQueue(char type, int num) {
+    int group_id = groups_encountered;
+
+    int i;
+    for (i = 0; i < num; i++) {
+        Customer* new_cus = kmalloc(sizeof(Customer), __GFP_NOFAIL);
+        new_cus->type = type;
+        new_cus->group_id = group_id;
+        new_cus->group_count = num;
+        INIT_LIST_HEAD(&(new_cus->list));
+
+        if (type == 'F') {
+            list_add(&(new_cus->list), &Queue);
+        }
+        else {
+            list_add_tail(&(new_cus->list), &Queue);
+        }
+    }
+
+	queue_group_num++;
+	queue_customer_num += num;
+
+    return 1;
+}
+
+int deleteQueue(void) {
+	if (list_empty_careful(&Queue) !=  0) //if empty
+		return -1;
+
+    Customer *c = list_first_entry(&Queue, Customer, list);
+    int amt = c->group_count;
+    list_del(&c->list);
+    kfree(c);
+
+    int i;
+    for (i = 1; i < amt; i++) {
+        c = list_first_entry(&Queue, Customer, list);
+        list_del(&c->list);
+        kfree(c);
+    }
+
+    queue_group_num--;
+    queue_customer_num -= amt;
+
+	return 0;
+}
 
 static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_t *ppos) {
     char s1[10];
@@ -72,24 +133,64 @@ static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_
         i1++;
 
     // TODO: bar status
-    char s2[15];
-    strcpy(s2, "todo");
+    char s2[50];
+    int i, fr=0, so=0, ju=0, se=0, pr=0;
+    if (occupancy == 0) {
+        strcpy(s2, "Empty");
+    }
+    else {
+        for (i = 0; i < 32; i++) {
+            switch (stool[i].status) {
+                case 'F':
+                    fr++;
+                    break;
+                case 'O':
+                    so++;
+                    break;
+                case 'J':
+                    ju++;
+                    break;
+                case 'S':
+                    se++;
+                    break;
+                case 'P':
+                    pr++;
+                    break;
+                default:
+                    ;
+            }
+        }
+        sprintf(s2, "Fr: %i | So: %i | Ju: %i | Se: %i | Pr: %i", fr, so, ju, se, pr);
+    }
 
     sprintf(msg, "Waiter state: %s\nCurrent table: %i\nElapsed time: %i seconds\nCurrent occupancy: %i\n", s1, current_table, i1, occupancy);
     sprintf(msg, "%sBar status: %s\nNumber of customers waiting: %i\nNumber of groups waiting: %i\n", msg, s2, queue_customer_num, queue_group_num);
     sprintf(msg, "%sContents of queue:\n", msg);
-    // TODO: queue contents
+    
+    // queue contents
+    Customer *c, *c2;
+    int c_id, n_id;
+    if (list_empty(&Queue) == 0) { // if not empty
+        list_for_each_entry(c, &Queue, list) {
+            c_id = c->group_id;
+            c2 = list_next_entry(c, list);
+            n_id = c2 ? c2->group_id : -1;
+
+            sprintf(msg, "%s%c ", msg, c->type);
+            if (c_id != n_id) {
+                sprintf(msg, "%s(group id: %i)\n", msg, c->group_id);
+            }
+        }
+    }
+    else {
+        sprintf(msg, "%sEmpty\n", msg);
+    }
+
     sprintf(msg, "%sNumber of customers serviced: %i\n\n\n", msg, serviced_customers);
     char s3[5];
-    int i;
     for (i = 4; i >= 1; i--) {
         strcpy(s3, (current_table == i) ? "[*]" : "[ ]");
         sprintf(msg, "%s%s Table %i: ", msg, s3, i);
-        // TODO: table contents
-        // 24 25 26 27 28 29 30 31
-        // 16 17 18 19 20 21 22 23
-        // 8 9 10 11 12 13 14 15
-        // 0 1 2 3 4 5 6 7
         int j;
         for (j = (i-1)*8; j < (i-1)*8 + 8; j++) {
             sprintf(msg, "%s%c ", msg, stool[j].status);
@@ -98,7 +199,7 @@ static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_
     }
 
     if (DEBUG) {
-        sprintf(msg, "%sLast customer data:\n\tarrival: %ld:%ld\n\t%c - %i\n", msg, last_customer.time_entered.tv_sec, last_customer.time_entered.tv_nsec, last_customer.type, last_customer.group_id);
+        sprintf(msg, "%sMost recent addition to queue:\n\ttype: %c group_count: %i group_id: %i\n", msg, last_customer.type, last_customer.group_count, last_customer.group_id);
     }
 
     procfs_buf_len = strlen(msg);
@@ -147,9 +248,12 @@ int initialize_bar(void) {
     current_table = 1;
     occupancy = 0;
     groups_encountered = 0;
+
+
     int i;
-    for (i = 0; i < 32; i++)
+    for (i = 0; i < 32; i++) {
         stool[i].status = 'C';
+    }
 
 	return 0;
 }
@@ -195,16 +299,26 @@ int customer_arrival(int number_of_customers, int type) {
 
     last_customer.group_id = groups_encountered++;
     last_customer.type = c;
+    last_customer.group_count = number_of_customers;
+
+    addQueue(c, number_of_customers);
 
     return 0;
 }
 
 extern int (*STUB_close_bar)(void);
 int close_bar(void) {
-    if (OPEN == true)
+    if (OPEN == true) {
         OPEN = false;
-    else
+    }
+    else {
         return 1;
+    }
+
+    while (queue_group_num > 0) {
+        deleteQueue();
+    }
+
 	return 0;
 }
 
@@ -229,7 +343,6 @@ static int barstool_init(void) {
     last_customer.group_id = -1;
     last_customer.type = 'X';
 
-
     current_table = -1;
     OPEN = false;
 
@@ -250,6 +363,8 @@ static void barstool_exit(void)
     STUB_customer_arrival = NULL;
     STUB_initialize_bar = NULL;
     STUB_test_call = NULL;
+
+    // TODO: delete list? 
 
 	proc_remove(proc_entry);
 	return;
