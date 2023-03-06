@@ -7,6 +7,7 @@
 #include <linux/string.h>
 #include <linux/list.h>
 #include <linux/slab.h>
+#include <linux/delay.h>
 
 MODULE_LICENSE("Dual BSD/GPL");
 
@@ -61,13 +62,13 @@ static bool waiter_toss_customer(void) {
         req_time = -1;
         switch(stool[8*(current_table-1) + i].status) {
             case 'F':
-                time = 5;
+                req_time = 5;
                 break;
             case 'O':
                 req_time = 10;
                 break;
             case 'J':
-                time = 15;
+                req_time = 15;
                 break;
             case 'S':
                 req_time = 20;
@@ -81,7 +82,7 @@ static bool waiter_toss_customer(void) {
             ktime_get_real_ts64(&ctime);
 
             // if they've had enough time
-            if (ctime.tv_sec - c.time.tv_sec >= req_time) {
+            if (ctime.tv_sec - c->time.tv_sec >= req_time) {
                 removed = true;
                 stool[8*(current_table-1) + i].status = 'D';
                 // TODO review logic right here.
@@ -160,27 +161,27 @@ static void waiter_brain(void) {
     while (true) {
         // move table
         if (waiter_move_table()) {
-            sleep(2);
+            msleep(2000);
         }
 
         // seat customers
         if (waiter_seat_customer()) {
-            sleep(1);
+            msleep(1000);
         }
 
         // remove customers
         if (waiter_toss_customer()) {
-            sleep(1);
+            msleep(1000);
         }
 
         // clean table
         if (waiter_clean_table()) {
-            sleep(10);
+            msleep(10000);
         }
 
         // seat customers (again)
         if (waiter_seat_customer()) {
-            sleep(1);
+            msleep(1000);
         }
 
     }
@@ -385,7 +386,8 @@ int initialize_bar(void) {
     }
 
     // setup waiter
-    pid = fork();
+    // TO DO: fork? process? 
+    pid = -1;
     if (pid == 0) {
         // in waiter
         waiter_brain();
@@ -461,10 +463,10 @@ int close_bar(void) {
     }
 
     // kill waiter
-    kill(waiter_pid);
+    // kill(waiter_pid);
 
 	return 0;
-}
+} 
 
 extern long (*STUB_test_call)(int);
 long test_call(int test) {
