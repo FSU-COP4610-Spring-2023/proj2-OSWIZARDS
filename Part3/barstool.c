@@ -28,6 +28,8 @@ static int current_table,
     serviced_customers,
     groups_encountered;
 
+static int waiter_pid;
+
 typedef struct {
     struct timespec64 time;
     int group_id;
@@ -39,7 +41,7 @@ typedef struct {
 struct list_head Queue = LIST_HEAD_INIT(Queue);
 
 typedef struct {
-    Customer occupant;
+    Customer *occupant;
     char status;
 } Place;
 
@@ -48,7 +50,143 @@ static Place stool[32];
 
 #define DEBUG 1
 
-int addQueue(char type, int num) {
+static bool waiter_toss_customer(void) {
+    int req_time;
+    Customer *c;
+    bool removed = false;
+    struct timespec64 ctime;
+
+    int i;
+    for (i = 0; i < 8; i++) {
+        req_time = -1;
+        switch(stool[8*(current_table-1) + i].status) {
+            case 'F':
+                time = 5;
+                break;
+            case 'O':
+                req_time = 10;
+                break;
+            case 'J':
+                time = 15;
+                break;
+            case 'S':
+                req_time = 20;
+                break;
+            case 'P':
+                req_time = 25;
+                break;
+        }
+        if (req_time != -1) {
+            c = stool[8*(current_table-1) + i].occupant;
+            ktime_get_real_ts64(&ctime);
+
+            // if they've had enough time
+            if (ctime.tv_sec - c.time.tv_sec >= req_time) {
+                removed = true;
+                stool[8*(current_table-1) + i].status = 'D';
+                // TODO review logic right here.
+                // once the customer leaves the chair, they are dead to us.
+                kfree(stool[8*(current_table-1) + i].occupant);
+            }
+        }
+    }
+
+    return removed;
+}
+
+static bool waiter_clean_table(void) {
+    int dirty_count = 0, i;
+
+    for (i = 0; i < 8; i++) {
+        if (stool[8*(current_table-1) + i].status == 'D') {
+            dirty_count++;
+        }
+    }
+
+    if (dirty_count >= 4) {
+        for (i = 0; i < 8; i++) {
+            if (stool[8*(current_table-1) + i].status == 'D') {
+                stool[8*(current_table-1) + i].status = 'C';
+            }
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+static bool waiter_seat_customer(void) {
+    Customer *c;
+    int i, num = 0, seated = 0;
+
+    // look at front customer
+    c = list_first_entry(&Queue, Customer, list);
+
+    // see if current table has space
+    for (i = 0; i < 8; i++) {
+        if (stool[8*(current_table-1) + i].status == 'C') {
+            num++; 
+        }
+    }
+
+    if (num >= c->group_count) { // if it does
+        // seatem
+        for (i = 0; seated < c->group_count; i++) {
+            if (stool[8*(current_table-1) + i].status == 'C') {
+                stool[8*(current_table-1) + i].status = c->type;
+                stool[8*(current_table-1) + i].occupant = c;
+                seated++; 
+            }
+        }
+
+        list_del(&c->list);
+        return true;
+    }
+
+    return false;
+}
+
+static bool waiter_move_table(void) {
+    current_table++;
+    if (current_table == 5) {
+        current_table = 1; 
+    }
+
+    return true;
+}
+
+static void waiter_brain(void) {
+    while (true) {
+        // move table
+        if (waiter_move_table()) {
+            sleep(2);
+        }
+
+        // seat customers
+        if (waiter_seat_customer()) {
+            sleep(1);
+        }
+
+        // remove customers
+        if (waiter_toss_customer()) {
+            sleep(1);
+        }
+
+        // clean table
+        if (waiter_clean_table()) {
+            sleep(10);
+        }
+
+        // seat customers (again)
+        if (waiter_seat_customer()) {
+            sleep(1);
+        }
+
+    }
+}
+
+static int addQueue(char type, int num) {
     int group_id = groups_encountered;
     int i;
 
@@ -73,7 +211,7 @@ int addQueue(char type, int num) {
     return 1;
 }
 
-int deleteQueue(void) {
+static int deleteQueue(void) {
     Customer *c;
     int amt, i;
 
@@ -128,7 +266,6 @@ static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_
     if (ctime.tv_nsec >= 500000000) 
         i1++;
 
-    // TODO: bar status
     if (occupancy == 0) {
         strcpy(s2, "Empty");
     }
@@ -225,7 +362,7 @@ static struct proc_ops procfile_fops = {
 
 extern int (*STUB_initialize_bar)(void);
 int initialize_bar(void) {
-    int i;
+    int i, pid;
 
     if (OPEN) {
         return 1;
@@ -245,6 +382,17 @@ int initialize_bar(void) {
 
     for (i = 0; i < 32; i++) {
         stool[i].status = 'C';
+    }
+
+    // setup waiter
+    pid = fork();
+    if (pid == 0) {
+        // in waiter
+        waiter_brain();
+        return 0;
+    }
+    else {
+        waiter_pid = pid;
     }
 
 	return 0;
@@ -311,6 +459,9 @@ int close_bar(void) {
     while (queue_group_num > 0) {
         deleteQueue();
     }
+
+    // kill waiter
+    kill(waiter_pid);
 
 	return 0;
 }
