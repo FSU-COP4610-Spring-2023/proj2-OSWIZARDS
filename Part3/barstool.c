@@ -50,8 +50,8 @@ static Place stool[32];
 
 int addQueue(char type, int num) {
     int group_id = groups_encountered;
-
     int i;
+
     for (i = 0; i < num; i++) {
         Customer* new_cus = kmalloc(sizeof(Customer), __GFP_NOFAIL);
         new_cus->type = type;
@@ -74,15 +74,17 @@ int addQueue(char type, int num) {
 }
 
 int deleteQueue(void) {
-	if (list_empty_careful(&Queue) !=  0) //if empty
+    Customer *c;
+    int amt, i;
+
+	if (list_empty_careful(&Queue) != 0) //if empty
 		return -1;
 
-    Customer *c = list_first_entry(&Queue, Customer, list);
-    int amt = c->group_count;
+    c = list_first_entry(&Queue, Customer, list);
+    amt = c->group_count;
     list_del(&c->list);
     kfree(c);
 
-    int i;
     for (i = 1; i < amt; i++) {
         c = list_first_entry(&Queue, Customer, list);
         list_del(&c->list);
@@ -96,7 +98,11 @@ int deleteQueue(void) {
 }
 
 static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_t *ppos) {
-    char s1[10];
+    char s1[10], s2[50], s3[5];
+    struct timespec64 ctime;
+    int i1, i, fr=0, so=0, ju=0, se=0, pr=0, c_id, n_id, j;
+    Customer *c, *c2;
+
     switch(waiter_state){
         case OFFLINE:
             strcpy(s1, "OFFLINE");
@@ -117,15 +123,12 @@ static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_
             strcpy(s1, "ERROR");
     }
 
-    struct timespec64 ctime;
     ktime_get_real_ts64(&ctime);
-    int i1 = ctime.tv_sec - time.tv_sec;
+    i1 = ctime.tv_sec - time.tv_sec;
     if (ctime.tv_nsec >= 500000000) 
         i1++;
 
     // TODO: bar status
-    char s2[50];
-    int i, fr=0, so=0, ju=0, se=0, pr=0;
     if (occupancy == 0) {
         strcpy(s2, "Empty");
     }
@@ -159,8 +162,6 @@ static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_
     sprintf(msg, "%sContents of queue:\n", msg);
     
     // queue contents
-    Customer *c, *c2;
-    int c_id, n_id;
     if (list_empty(&Queue) == 0) { // if not empty
         list_for_each_entry(c, &Queue, list) {
             c_id = c->group_id;
@@ -178,11 +179,9 @@ static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_
     }
 
     sprintf(msg, "%sNumber of customers serviced: %i\n\n\n", msg, serviced_customers);
-    char s3[5];
     for (i = 4; i >= 1; i--) {
         strcpy(s3, (current_table == i) ? "[*]" : "[ ]");
         sprintf(msg, "%s%s Table %i: ", msg, s3, i);
-        int j;
         for (j = (i-1)*8; j < (i-1)*8 + 8; j++) {
             sprintf(msg, "%s%c ", msg, stool[j].status);
         }
@@ -205,6 +204,8 @@ static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_
 }
 
 static ssize_t procfile_write(struct file* file, const char * ubuf, size_t count, loff_t* ppos) {
+    int i;
+
     if (count > BUF_LEN) {
 		procfs_buf_len = BUF_LEN;
     }
@@ -212,7 +213,7 @@ static ssize_t procfile_write(struct file* file, const char * ubuf, size_t count
 		procfs_buf_len = count;
     }
 
-	copy_from_user(msg, ubuf, procfs_buf_len);
+	i = copy_from_user(msg, ubuf, procfs_buf_len);
 
 	return procfs_buf_len;
 }
@@ -224,6 +225,8 @@ static struct proc_ops procfile_fops = {
 
 extern int (*STUB_initialize_bar)(void);
 int initialize_bar(void) {
+    int i;
+
     if (OPEN) {
         return 1;
     }
@@ -240,7 +243,6 @@ int initialize_bar(void) {
     occupancy = 0;
     groups_encountered = 0;
 
-    int i;
     for (i = 0; i < 32; i++) {
         stool[i].status = 'C';
     }
@@ -250,6 +252,8 @@ int initialize_bar(void) {
 
 extern int (*STUB_customer_arrival)(int, int);
 int customer_arrival(int number_of_customers, int type) {
+    char c;
+
     if (!OPEN) {
         return 0;
     }
@@ -263,7 +267,6 @@ int customer_arrival(int number_of_customers, int type) {
         return 1;
     }
     
-    char c;
     switch (type) {
         case 0:
             c = 'F';
