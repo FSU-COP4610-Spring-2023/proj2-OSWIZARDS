@@ -36,15 +36,6 @@ typedef struct {
     struct list_head list;
 } Customer;
 
-/*
-typedef struct {
-    int group_id;
-    Customer gr[8];
-    int group_count;
-    char type;
-} Group; 
-*/
-
 struct list_head Queue = LIST_HEAD_INIT(Queue);
 
 typedef struct {
@@ -248,7 +239,6 @@ int initialize_bar(void) {
     current_table = 1;
     occupancy = 0;
     groups_encountered = 0;
-
 
     int i;
     for (i = 0; i < 32; i++) {
