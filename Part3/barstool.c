@@ -468,10 +468,6 @@ int close_bar(void) {
 	return 0;
 } 
 
-extern long (*STUB_test_call)(int);
-long test_call(int test) {
-    return test;
-}
 
 static int barstool_init(void) {
     if (DEBUG) {
@@ -484,8 +480,6 @@ static int barstool_init(void) {
     STUB_close_bar = close_bar;
     STUB_customer_arrival = customer_arrival;
     STUB_initialize_bar = initialize_bar;
-    STUB_test_call = test_call;
-
     last_customer.group_id = -1;
     last_customer.type = 'X';
 
@@ -508,7 +502,6 @@ static void barstool_exit(void)
     STUB_close_bar = NULL;
     STUB_customer_arrival = NULL;
     STUB_initialize_bar = NULL;
-    STUB_test_call = NULL;
 
     // TODO: delete list? 
 

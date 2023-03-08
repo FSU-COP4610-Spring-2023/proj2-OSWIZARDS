@@ -41,14 +41,3 @@ SYSCALL_DEFINE0(close_bar) {
         return -ENOSYS;
 }
 
-long (*STUB_test_call)(int) = NULL;
-EXPORT_SYMBOL(STUB_test_call);
-SYSCALL_DEFINE1(test_call, int, test_int) {
-    if (DEBUG)
-        printk(KERN_NOTICE "SYSCALL_DEFINE0 close_bar\n");
-    
-    if (STUB_test_call != NULL)
-        return STUB_test_call(test_int);
-    else
-        return -ENOSYS;
-}
