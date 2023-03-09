@@ -33,7 +33,6 @@ static int current_table,
     serviced_customers,
     groups_encountered;
 
-static int waiter_pid;
 
 typedef struct {
     struct timespec64 time;
@@ -55,7 +54,7 @@ struct thread_parameter {
 	int id;
 	struct task_struct *kthread;
 	struct mutex queueMutex;
-    struct mutex procMutex;
+        struct mutex procMutex;
 
 };
 
@@ -71,7 +70,7 @@ static Place stool[32];
 static bool waiter_toss_customer(void) {
     int req_time;
     Customer *c;
-    mutex_lock(&thread1.queueMutex);    //
+    mutex_lock(&(parm->queueMutex));  
     bool removed = false;
     struct timespec64 ctime;
 
@@ -111,7 +110,8 @@ static bool waiter_toss_customer(void) {
         }
     }
 
-    mutex_unlock(&thread1.queueMutex);
+    mutex_unlock(&(parm->queueMutex));  
+
     return removed;
 }
 
@@ -124,24 +124,29 @@ static bool waiter_clean_table(void) {
         }
     }
 
+       
+
     if (dirty_count >= 4) {
         for (i = 0; i < 8; i++) {
-            if (stool[8*(current_table-1) + i].status == 'D') {
+            if (stool[8*(current_table-1) + i].status == 'D' && ( mutex_lock_interruptible(&thread1.procMutex)==0)) {
                 stool[8*(current_table-1) + i].status = 'C';
+                mutex_unlock(&thread1.mutex);
             }
         }
+    
 
         return true;
     }
 
+    mutex_unlock(&thread1.procMutex);       //incase there was not more than  4 dirty tables
     return false;
 }
 
 static bool waiter_seat_customer(void) {
     Customer *c;
     int i, num = 0, seated = 0;
-    mutex_lock(&thread1.queueMutex);        //acquieres a lock so queue does not edit its information  
     // look at front customer
+    mutex_lock(&(parm->queueMutex));  
     c = list_first_entry(&Queue, Customer, list);
 
     // see if current table has space
@@ -161,9 +166,8 @@ static bool waiter_seat_customer(void) {
             }
         }
 
-        list_del(&c->list);
-
-        mutex_unlock(&thread1.queueMutex);      //unlocks mutex so that  queue can now edit its content
+        mutex_unlock(&(parm->queueMutex));      //unlocks mutex so that  Deletequeue can now delete content
+        deleteQueue();                          // while in the function we lock it to make sure no one else its editing queue
         return true;
     }
 
@@ -171,21 +175,25 @@ static bool waiter_seat_customer(void) {
 }
 
 static bool waiter_move_table(void) {
-    current_table++;
-    if (current_table == 5) {
-        current_table = 1; 
+    if(mutex_lock_interruptible(&thread1.procMutex)==0){
+        current_table++;
+        if (current_table == 5) {
+            current_table = 1; 
+        }
     }
 
+    mutex_unlock(&thread1.procMutex);
     return true;
 }
 
 static int waiter_brain(void * data) {
 
-    struct thread_parameter *parm = data;
-
+    // struct thread_parameter *parm = data;
+    
     while (!kthread_should_stop()) {
+       
+    // we will call locks inside of fucntion that way it will be easier and it wont have to wait to be ublocked after msleep()
         // move table
-
         if (waiter_move_table()) {
             msleep(2000);
         }
@@ -195,10 +203,12 @@ static int waiter_brain(void * data) {
             msleep(1000);
         }
 
+
         // remove customers
         if (waiter_toss_customer()) {
             msleep(1000);
         }
+
 
         // clean table
         if (waiter_clean_table()) {
@@ -206,9 +216,12 @@ static int waiter_brain(void * data) {
         }
 
         // seat customers (again)
+       
         if (waiter_seat_customer()) {
             msleep(1000);
         }
+
+
 
     }
 
@@ -217,7 +230,6 @@ static int waiter_brain(void * data) {
 
 static int addQueue(char type, int num) {
     int group_id = groups_encountered;
-    int i;
 
 
     //if waiter is acessing queue wait untill its done  
@@ -245,24 +257,22 @@ static int addQueue(char type, int num) {
 
 static int deleteQueue(void) {
     Customer *c;
-    int amt, i,j;
-    char buf[30]
-
+    int amt;
 
 	if (list_empty(&Queue)) //if empty
 		return -1;
 
+    /* even though the func is only used by waiter we want to lock to make sure main process is not
+        accessing shared resources and editing such as "adding someone to queue" */
     if(mutex_lock_interruptible(&(thread1.queueMutex))==0){
         c = list_first_entry(&Queue, Customer, list);
         amt = c->group_count;
         list_del(&c->list);
-        //kfree(&c->list)           //we don't want to delete it since we still need to use data of customer in stool
 
         queue_group_num--;
         queue_customer_num -= amt;
-        mutex_unlock(&(thread1.queueMutex));	
-
     }
+    mutex_unlock(&(thread1.queueMutex));	
 
 	return 0;
 }
@@ -270,10 +280,11 @@ static int deleteQueue(void) {
 static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_t *ppos) {
     char s1[10], s2[50], s3[5];
     struct timespec64 ctime;
-    struct list_head* temp;
+    // struct list_head* temp;
+    if(mutex_lock_interruptible(&(thread1.procMutex))==0){
 
-    int i1, i, fr=0, so=0, ju=0, se=0, pr=0, c_id, n_id, j;
-    Customer *c, *c2;
+    int i1, i, fr=0, so=0, ju=0, se=0, pr=0, c_id, j;
+    Customer *c;
 
     switch(waiter_state){
         case OFFLINE:
@@ -371,12 +382,17 @@ static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_
 	if (copy_to_user(ubuf, msg, procfs_buf_len)) {
 		return -EFAULT;
     }
-	*ppos = procfs_buf_len;
+	*ppos = procfs_buf_len;    
+    }
+
+    mutex_unlock(&thread1.procMutex);
+
     return procfs_buf_len;
 }
 
 static ssize_t procfile_write(struct file* file, const char * ubuf, size_t count, loff_t* ppos) {
     int i;
+    if(mutex_lock_interruptible(&(thread1.procMutex))==0){
 
     if (count > BUF_LEN) {
 		procfs_buf_len = BUF_LEN;
@@ -386,6 +402,9 @@ static ssize_t procfile_write(struct file* file, const char * ubuf, size_t count
     }
 
 	i = copy_from_user(msg, ubuf, procfs_buf_len);
+
+}
+    mutex_unlock(&thread1.procMutex);
 
 	return procfs_buf_len;
 }
@@ -495,7 +514,7 @@ int close_bar(void) {
    i = kthread_stop(thread1.kthread);      //stop thread
    
    if (i != -EINTR)                        //checks if thread did actually stop
-●        printk("Waiter thread has stopped\n");
+        printk("Waiter thread has stopped\n");
     mutex_destroy(&thread1.queueMutex);      //destroy the mutex so you dont have a deadlock
     mutex_destroy(&thread1.procMutex);
 
