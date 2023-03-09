@@ -69,12 +69,14 @@ static Place stool[32];
 
 static bool waiter_toss_customer(void) {
     int req_time;
+    int i;
     Customer *c;
-    mutex_lock(&(parm->queueMutex));  
     bool removed = false;
     struct timespec64 ctime;
+    mutex_lock(&thread1.queueMutex);  
 
-    int i;
+
+
     for (i = 0; i < 8; i++) {
         req_time = -1;
         switch(stool[8*(current_table-1) + i].status) {
@@ -110,7 +112,7 @@ static bool waiter_toss_customer(void) {
         }
     }
 
-    mutex_unlock(&(parm->queueMutex));  
+    mutex_unlock(&thread1.queueMutex);  
 
     return removed;
 }
@@ -130,7 +132,7 @@ static bool waiter_clean_table(void) {
         for (i = 0; i < 8; i++) {
             if (stool[8*(current_table-1) + i].status == 'D' && ( mutex_lock_interruptible(&thread1.procMutex)==0)) {
                 stool[8*(current_table-1) + i].status = 'C';
-                mutex_unlock(&thread1.mutex);
+                mutex_unlock(&thread1.procMutex);
             }
         }
     
@@ -142,11 +144,60 @@ static bool waiter_clean_table(void) {
     return false;
 }
 
+static int addQueue(char type, int num) {
+    int group_id = groups_encountered;
+
+
+    //if waiter is acessing queue wait untill its done  
+    if(mutex_lock_interruptible(&(thread1.queueMutex))==0){
+        Customer* new_cus = kmalloc(sizeof(Customer), __GFP_NOFAIL);
+        new_cus->type = type;
+        new_cus->group_id = group_id;
+        new_cus->group_count = num;
+        INIT_LIST_HEAD(&(new_cus->list));
+
+            if (type == 'F' || type=='O') {
+                list_add(&(new_cus->list), &Queue);
+            }
+            else {
+                list_add_tail(&(new_cus->list), &Queue);
+            }
+
+	    queue_group_num++;
+	    queue_customer_num += num;
+        mutex_unlock(&(thread1.queueMutex));	
+    }
+
+    return 1;
+}
+
+static int deleteQueue(void) {
+    Customer *c;
+    int amt;
+
+	if (list_empty(&Queue)) //if empty
+		return -1;
+
+    /* even though the func is only used by waiter we want to lock to make sure main process is not
+        accessing shared resources and editing such as "adding someone to queue" */
+    if(mutex_lock_interruptible(&(thread1.queueMutex))==0){
+        c = list_first_entry(&Queue, Customer, list);
+        amt = c->group_count;
+        list_del(&c->list);
+
+        queue_group_num--;
+        queue_customer_num -= amt;
+    }
+    mutex_unlock(&(thread1.queueMutex));	
+
+	return 0;
+}
+
 static bool waiter_seat_customer(void) {
     Customer *c;
     int i, num = 0, seated = 0;
     // look at front customer
-    mutex_lock(&(parm->queueMutex));  
+    mutex_lock(&thread1.queueMutex);  
     c = list_first_entry(&Queue, Customer, list);
 
     // see if current table has space
@@ -166,7 +217,7 @@ static bool waiter_seat_customer(void) {
             }
         }
 
-        mutex_unlock(&(parm->queueMutex));      //unlocks mutex so that  Deletequeue can now delete content
+        mutex_unlock(&thread1.queueMutex);      //unlocks mutex so that  Deletequeue can now delete content
         deleteQueue();                          // while in the function we lock it to make sure no one else its editing queue
         return true;
     }
@@ -228,54 +279,9 @@ static int waiter_brain(void * data) {
     return 0;
 }
 
-static int addQueue(char type, int num) {
-    int group_id = groups_encountered;
 
 
-    //if waiter is acessing queue wait untill its done  
-    if(mutex_lock_interruptible(&(thread1.queueMutex))==0){
-        Customer* new_cus = kmalloc(sizeof(Customer), __GFP_NOFAIL);
-        new_cus->type = type;
-        new_cus->group_id = group_id;
-        new_cus->group_count = num;
-        INIT_LIST_HEAD(&(new_cus->list));
 
-            if (type == 'F' || type=='O') {
-                list_add(&(new_cus->list), &Queue);
-            }
-            else {
-                list_add_tail(&(new_cus->list), &Queue);
-            }
-
-	    queue_group_num++;
-	    queue_customer_num += num;
-        mutex_unlock(&(thread1.queueMutex));	
-    }
-
-    return 1;
-}
-
-static int deleteQueue(void) {
-    Customer *c;
-    int amt;
-
-	if (list_empty(&Queue)) //if empty
-		return -1;
-
-    /* even though the func is only used by waiter we want to lock to make sure main process is not
-        accessing shared resources and editing such as "adding someone to queue" */
-    if(mutex_lock_interruptible(&(thread1.queueMutex))==0){
-        c = list_first_entry(&Queue, Customer, list);
-        amt = c->group_count;
-        list_del(&c->list);
-
-        queue_group_num--;
-        queue_customer_num -= amt;
-    }
-    mutex_unlock(&(thread1.queueMutex));	
-
-	return 0;
-}
 
 static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_t *ppos) {
     char s1[10], s2[50], s3[5];
