@@ -7,6 +7,11 @@
 #include <linux/string.h>
 #include <linux/list.h>
 #include <linux/slab.h>
+#include <linux/delay.h>
+#include <linux/mutex.h>
+#include <linux/kthread.h>
+
+
 
 MODULE_LICENSE("Dual BSD/GPL");
 
@@ -28,6 +33,8 @@ static int current_table,
     serviced_customers,
     groups_encountered;
 
+static int waiter_pid;
+
 typedef struct {
     struct timespec64 time;
     int group_id;
@@ -36,63 +43,226 @@ typedef struct {
     struct list_head list;
 } Customer;
 
+
 struct list_head Queue = LIST_HEAD_INIT(Queue);
 
 typedef struct {
-    Customer occupant;
+    Customer *occupant;
     char status;
 } Place;
+
+struct thread_parameter {
+	int id;
+	struct task_struct *kthread;
+	struct mutex queueMutex;
+    struct mutex procMutex;
+
+};
+
+struct thread_parameter thread1;
+
+
 
 static Customer last_customer;
 static Place stool[32];
 
 #define DEBUG 1
 
-int addQueue(char type, int num) {
+static bool waiter_toss_customer(void) {
+    int req_time;
+    Customer *c;
+    mutex_lock(&thread1.queueMutex);    //
+    bool removed = false;
+    struct timespec64 ctime;
+
+    int i;
+    for (i = 0; i < 8; i++) {
+        req_time = -1;
+        switch(stool[8*(current_table-1) + i].status) {
+            case 'F':
+                req_time = 5;
+                break;
+            case 'O':
+                req_time = 10;
+                break;
+            case 'J':
+                req_time = 15;
+                break;
+            case 'S':
+                req_time = 20;
+                break;
+            case 'P':
+                req_time = 25;
+                break;
+        }
+        if (req_time != -1) {
+            c = stool[8*(current_table-1) + i].occupant;
+            ktime_get_real_ts64(&ctime);
+
+            // if they've had enough time
+            if (ctime.tv_sec - c->time.tv_sec >= req_time) {
+                removed = true;
+                stool[8*(current_table-1) + i].status = 'D';
+                // TODO review logic right here.
+                // once the customer leaves the chair, they are dead to us.
+                kfree(stool[8*(current_table-1) + i].occupant);
+
+            }
+        }
+    }
+
+    mutex_unlock(&thread1.queueMutex);
+    return removed;
+}
+
+static bool waiter_clean_table(void) {
+    int dirty_count = 0, i;
+
+    for (i = 0; i < 8; i++) {
+        if (stool[8*(current_table-1) + i].status == 'D') {
+            dirty_count++;
+        }
+    }
+
+    if (dirty_count >= 4) {
+        for (i = 0; i < 8; i++) {
+            if (stool[8*(current_table-1) + i].status == 'D') {
+                stool[8*(current_table-1) + i].status = 'C';
+            }
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+static bool waiter_seat_customer(void) {
+    Customer *c;
+    int i, num = 0, seated = 0;
+    mutex_lock(&thread1.queueMutex);        //acquieres a lock so queue does not edit its information  
+    // look at front customer
+    c = list_first_entry(&Queue, Customer, list);
+
+    // see if current table has space
+    for (i = 0; i < 8; i++) {
+        if (stool[8*(current_table-1) + i].status == 'C') {
+            	num++; 
+        }
+    }
+
+    if (num >= c->group_count) { // if it does
+        // seatem
+        for (i = 0; seated < c->group_count; i++) {
+            if (stool[8*(current_table-1) + i].status == 'C') {
+                stool[8*(current_table-1) + i].status = c->type;
+                stool[8*(current_table-1) + i].occupant = c;
+                seated++; 
+            }
+        }
+
+        list_del(&c->list);
+
+        mutex_unlock(&thread1.queueMutex);      //unlocks mutex so that  queue can now edit its content
+        return true;
+    }
+
+    return false;
+}
+
+static bool waiter_move_table(void) {
+    current_table++;
+    if (current_table == 5) {
+        current_table = 1; 
+    }
+
+    return true;
+}
+
+static int waiter_brain(void * data) {
+
+    struct thread_parameter *parm = data;
+
+    while (!kthread_should_stop()) {
+        // move table
+
+        if (waiter_move_table()) {
+            msleep(2000);
+        }
+
+        // seat customers
+        if (waiter_seat_customer()) {
+            msleep(1000);
+        }
+
+        // remove customers
+        if (waiter_toss_customer()) {
+            msleep(1000);
+        }
+
+        // clean table
+        if (waiter_clean_table()) {
+            msleep(10000);
+        }
+
+        // seat customers (again)
+        if (waiter_seat_customer()) {
+            msleep(1000);
+        }
+
+    }
+
+    return 0;
+}
+
+static int addQueue(char type, int num) {
     int group_id = groups_encountered;
     int i;
 
-    for (i = 0; i < num; i++) {
+
+    //if waiter is acessing queue wait untill its done  
+    if(mutex_lock_interruptible(&(thread1.queueMutex))==0){
         Customer* new_cus = kmalloc(sizeof(Customer), __GFP_NOFAIL);
         new_cus->type = type;
         new_cus->group_id = group_id;
         new_cus->group_count = num;
         INIT_LIST_HEAD(&(new_cus->list));
 
-        if (type == 'F') {
-            list_add(&(new_cus->list), &Queue);
-        }
-        else {
-            list_add_tail(&(new_cus->list), &Queue);
-        }
-    }
+            if (type == 'F' || type=='O') {
+                list_add(&(new_cus->list), &Queue);
+            }
+            else {
+                list_add_tail(&(new_cus->list), &Queue);
+            }
 
-	queue_group_num++;
-	queue_customer_num += num;
+	    queue_group_num++;
+	    queue_customer_num += num;
+        mutex_unlock(&(thread1.queueMutex));	
+    }
 
     return 1;
 }
 
-int deleteQueue(void) {
+static int deleteQueue(void) {
     Customer *c;
-    int amt, i;
+    int amt, i,j;
+    char buf[30]
 
-	if (list_empty_careful(&Queue) != 0) //if empty
+
+	if (list_empty(&Queue)) //if empty
 		return -1;
 
-    c = list_first_entry(&Queue, Customer, list);
-    amt = c->group_count;
-    list_del(&c->list);
-    kfree(c);
-
-    for (i = 1; i < amt; i++) {
+    if(mutex_lock_interruptible(&(thread1.queueMutex))==0){
         c = list_first_entry(&Queue, Customer, list);
+        amt = c->group_count;
         list_del(&c->list);
-        kfree(c);
-    }
+        //kfree(&c->list)           //we don't want to delete it since we still need to use data of customer in stool
 
-    queue_group_num--;
-    queue_customer_num -= amt;
+        queue_group_num--;
+        queue_customer_num -= amt;
+        mutex_unlock(&(thread1.queueMutex));	
+
+    }
 
 	return 0;
 }
@@ -100,6 +270,8 @@ int deleteQueue(void) {
 static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_t *ppos) {
     char s1[10], s2[50], s3[5];
     struct timespec64 ctime;
+    struct list_head* temp;
+
     int i1, i, fr=0, so=0, ju=0, se=0, pr=0, c_id, n_id, j;
     Customer *c, *c2;
 
@@ -128,7 +300,6 @@ static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_
     if (ctime.tv_nsec >= 500000000) 
         i1++;
 
-    // TODO: bar status
     if (occupancy == 0) {
         strcpy(s2, "Empty");
     }
@@ -163,13 +334,14 @@ static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_
     
     // queue contents
     if (list_empty(&Queue) == 0) { // if not empty
-        list_for_each_entry(c, &Queue, list) {
+        list_for_each_entry(c, &Queue, list) {      //iterates through list and makes c point to cur node
             c_id = c->group_id;
-            c2 = list_next_entry(c, list);
-            n_id = c2 ? c2->group_id : -1;
+            //c2 = list_entry (temp, Customer, list);
 
+            for(j=0;j<(c->group_count);j++)     //prints as many
             sprintf(msg, "%s%c ", msg, c->type);
-            if (c_id != n_id) {
+            
+            if ((c->group_count) > 0) {
                 sprintf(msg, "%s(group id: %i)\n", msg, c->group_id);
             }
         }
@@ -247,6 +419,16 @@ int initialize_bar(void) {
         stool[i].status = 'C';
     }
 
+    // setup waiter
+    // TO DO: fork? process? 
+    mutex_init(&thread1.queueMutex);    //intitalize both mutex
+    mutex_init(&thread1.procMutex);
+    thread1.kthread = kthread_run(waiter_brain, thread1.kthread, "waiter thread \n");
+    if (IS_ERR(thread1.kthread)) {
+		printk(KERN_WARNING "error spawning thread");
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -301,6 +483,8 @@ int customer_arrival(int number_of_customers, int type) {
 
 extern int (*STUB_close_bar)(void);
 int close_bar(void) {
+    int i;
+
     if (OPEN == true) {
         OPEN = false;
     }
@@ -308,17 +492,16 @@ int close_bar(void) {
         return 1;
     }
 
-    while (queue_group_num > 0) {
-        deleteQueue();
-    }
+   i = kthread_stop(thread1.kthread);      //stop thread
+   
+   if (i != -EINTR)                        //checks if thread did actually stop
+●        printk("Waiter thread has stopped\n");
+    mutex_destroy(&thread1.queueMutex);      //destroy the mutex so you dont have a deadlock
+    mutex_destroy(&thread1.procMutex);
 
 	return 0;
-}
+} 
 
-extern long (*STUB_test_call)(int);
-long test_call(int test) {
-    return test;
-}
 
 static int barstool_init(void) {
     if (DEBUG) {
@@ -331,7 +514,6 @@ static int barstool_init(void) {
     STUB_close_bar = close_bar;
     STUB_customer_arrival = customer_arrival;
     STUB_initialize_bar = initialize_bar;
-    STUB_test_call = test_call;
 
     last_customer.group_id = -1;
     last_customer.type = 'X';
@@ -352,10 +534,10 @@ static void barstool_exit(void)
         printk(KERN_INFO "barstool_exit\n");
     }
 
+   
     STUB_close_bar = NULL;
     STUB_customer_arrival = NULL;
     STUB_initialize_bar = NULL;
-    STUB_test_call = NULL;
 
     // TODO: delete list? 
 

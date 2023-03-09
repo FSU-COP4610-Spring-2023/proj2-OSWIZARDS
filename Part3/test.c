@@ -16,9 +16,6 @@ int close_bar(void) {
     return syscall(550);
 }
 
-int test_call(int test) {
-    return syscall(551, test);
-}
 
 int main(int argc, char **argv) {
     int cmd = atoi(argv[1]);
@@ -35,10 +32,6 @@ int main(int argc, char **argv) {
         case 3:
             //printf("closing bar...\n");
             ret = close_bar();
-            break;
-        case 4:
-            //printf("test call...\n");
-            ret = test_call(atoi(argv[2]));
             break;
         default:
     }
