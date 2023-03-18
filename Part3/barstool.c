@@ -73,7 +73,7 @@ static bool waiter_toss_customer(void) {
     Customer *c;
     bool removed = false;
     struct timespec64 ctime;
-    mutex_lock_interruptible(&thread1.procMutex); 
+    //mutex_lock_interruptible(&thread1.procMutex); 
 
     for (i = 0; i < 8; i++) {
         req_time = -1;
@@ -111,20 +111,26 @@ static bool waiter_toss_customer(void) {
         }
     }
    // if(mutex_is_locked(&thread1.procMutex))
-        mutex_unlock(&thread1.procMutex);  
+       // mutex_unlock(&thread1.procMutex);
 
+    if(removed==true)
+    {    waiter_state=LOADING;
+         c=NULL;
+        for( i = 0 ; i < 8; i++)
+        {
+            if(stool[8*(current_table-1) + i].occupant!=c && stool[8*(current_table-1) + i].status=='D')
+            {   kfree(stool[8*(current_table-1) + i].occupant); 
+                c=stool[8*(current_table-1) + i].occupant;
+            }
 
-    for( i = 0 ; i < 8; i++)
-    {
-        if(stool[8*(current_table-1) + i].occupant!=NULL && stool[8*(current_table-1) + i].status=='D')
-            kfree(stool[8*(current_table-1) + i].occupant); printk(KERN_INFO"ReqTime");
-
+        }
     }
+    
     return removed;
 }
 
 static bool waiter_clean_table(void) {
-    int dirty_count = 0, i;
+    int dirty_count = 0, i,j;
 
     for (i = 0; i < 8; i++) {
         if (stool[8*(current_table-1) + i].status == 'D') {
@@ -132,28 +138,23 @@ static bool waiter_clean_table(void) {
         }
     }
 
-                printk(KERN_INFO"Clean num tables: %d", dirty_count);
-
     if(dirty_count<4)
         return false;
 
 
-    if (dirty_count >= 4) {
-        for (i = 0; i < 8; i++) {
-            if (stool[8*(current_table-1) + i].status == 'D'  ) {
-              //  mutex_lock_interruptible(&thread1.procMutex);
-                stool[8*(current_table-1) + i].status = 'C';
-                printk(KERN_INFO"Clean");
-		//mutex_unlock(&thread1.procMutex);
-            }
+    for (i = 0; i < 8; i++) {
+        if (stool[8*(current_table-1) + i].status == 'D'  ) {
+            j=mutex_lock_interruptible(&thread1.procMutex);
+            stool[8*(current_table-1) + i].status = 'C';
+            mutex_unlock(&thread1.procMutex);
         }
+    }
     
 
+        mutex_unlock(&thread1.procMutex);       //incase there was not more than  4 dirty tables
         return true;
-    }
 
-    mutex_unlock(&thread1.procMutex);       //incase there was not more than  4 dirty tables
-    return false;
+
 }
 
 static int addQueue(char type, int num) {
@@ -177,7 +178,7 @@ static int addQueue(char type, int num) {
 
 	    queue_group_num++;
 	    queue_customer_num += num;
-        mutex_unlock(&(thread1.queueMutex));	
+        mutex_unlock(&(thread1.queueMutex));
     }
 
     return 1;
@@ -209,7 +210,7 @@ static bool waiter_seat_customer(void) {
     Customer *c;
     int i, num = 0, seated = 0;
     // look at front customer
-    mutex_lock(&thread1.queueMutex);  
+    i=mutex_lock_interruptible(&thread1.queueMutex);  
     c = list_first_entry(&Queue, Customer, list);
     mutex_unlock(&thread1.queueMutex);      //unlocks mutex so that  Deletequeue can now delete content
     ktime_get_real_ts64(&c->time);
@@ -221,9 +222,10 @@ static bool waiter_seat_customer(void) {
         }
     }
 
-    mutex_lock(&thread1.procMutex);  
+    i=mutex_lock_interruptible(&thread1.procMutex);  
     if (num >= c->group_count) { // if it does
         // seatem
+        waiter_state=LOADING;
         for (i = 0; seated < c->group_count; i++) {
             if (stool[8*(current_table-1) + i].status == 'C') {
                 stool[8*(current_table-1) + i].status = c->type;
@@ -236,11 +238,11 @@ static bool waiter_seat_customer(void) {
         deleteQueue();                          // while in the function we lock it to make sure no one else its editing queue
         return true;
     }
-
     return false;
 }
 
 static bool waiter_move_table(void) {
+        waiter_state=MOVING;
         current_table++;
         if (current_table == 5) {
             current_table = 1; 
@@ -297,11 +299,11 @@ static bool isNotClean(void)
     int i;
     for(i=0;i<32;i++)
     {
-        if(stool[i].status!='C'  && stool[i].status!='D')
-            return false;
+        if(stool[i].status!='C')
+            return true;
     }
 
-    return true;
+    return false;
 }
 static void cleanBar(void)
 {
@@ -391,7 +393,7 @@ static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_
     
     if (list_empty(&Queue) == 0) { // if not empty
         
-        mutex_lock_interruptible(&(thread1.queueMutex));
+        i= mutex_lock_interruptible(&(thread1.queueMutex));
         list_for_each_entry(c, &Queue, list) {      //iterates through list and makes c point to cur node
             c_id = c->group_id;
             //c2 = list_entry (temp, Customer, list);
@@ -413,7 +415,7 @@ static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_
 
     sprintf(msg, "%sNumber of customers serviced: %i\n\n\n", msg, serviced_customers);
     
-    mutex_lock_interruptible(&(thread1.procMutex));
+    i=mutex_lock_interruptible(&(thread1.procMutex));
     for (i = 4; i >= 1; i--) {
         strcpy(s3, (current_table == i) ? "[*]" : "[ ]");
         sprintf(msg, "%s%s Table %i: ", msg, s3, i);
@@ -454,10 +456,9 @@ static ssize_t procfile_write(struct file* file, const char * ubuf, size_t count
 		procfs_buf_len = count;
     }
 
-    mutex_lock_interruptible(&thread1.procMutex);
+    // i=mutex_lock_interruptible(&thread1.procMutex);
 	i = copy_from_user(msg, ubuf, procfs_buf_len);
-    mutex_lock(&thread1.procMutex);
-
+   // mutex_lock(&thread1.procMutex);
 
 	return procfs_buf_len;
 }
@@ -564,15 +565,21 @@ int close_bar(void) {
         return 1;
     }
 
-    // while(isNotClean()) i++;
+    while (!list_empty(&Queue))
+        deleteQueue();
 
-    // cleanBar();
+    if(isNotClean())
+        cleanBar();
+
     mutex_destroy(&thread1.queueMutex);         //destroy the mutex so you dont have a deadlock
     mutex_destroy(&thread1.procMutex);         // it should be done before 
-   i = kthread_stop(thread1.kthread);          //stop thread
-   
+    i = kthread_stop(thread1.kthread);          //stop thread
+    waiter_state=OFFLINE;
+
    if (i != -EINTR)                        //checks if thread did actually stop
-        printk("Waiter thread has stopped\n");
+    {    printk("Waiter thread has stopped\n");
+
+    }
     
 
 	return 0;
@@ -590,7 +597,6 @@ static int barstool_init(void) {
     STUB_close_bar = close_bar;
     STUB_customer_arrival = customer_arrival;
     STUB_initialize_bar = initialize_bar;
-
     last_customer.group_id = -1;
     last_customer.type = 'X';
     waiter_state=OFFLINE;
