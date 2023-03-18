@@ -100,18 +100,15 @@ static bool waiter_toss_customer(void) {
             // if they've had enough time
             if (ctime.tv_sec - c->time.tv_sec >= req_time) {
                 removed = true;
-                // mutex_lock_interruptible(&thread1.procMutex); 
+                   mutex_lock_interruptible(&thread1.procMutex); 
                 stool[8*(current_table-1) + i].status = 'D';
                 // once the customer leaves the chair, they are dead to us.
-            }
+	           mutex_unlock(&thread1.procMutex);
 
-            // if(mutex_is_locked(&thread1.procMutex))
-            //    mutex_unlock(&thread1.procMutex);
+            }
 
         }
     }
-   // if(mutex_is_locked(&thread1.procMutex))
-       // mutex_unlock(&thread1.procMutex);
 
     if(removed==true)
     {    waiter_state=LOADING;
@@ -119,7 +116,8 @@ static bool waiter_toss_customer(void) {
         for( i = 0 ; i < 8; i++)
         {
             if(stool[8*(current_table-1) + i].occupant!=c && stool[8*(current_table-1) + i].status=='D')
-            {   kfree(stool[8*(current_table-1) + i].occupant); 
+            {   serviced_customers+=stool[8*(current_table-1) + i].occupant->group_count;
+		kfree(stool[8*(current_table-1) + i].occupant); 
                 c=stool[8*(current_table-1) + i].occupant;
             }
 
@@ -150,8 +148,6 @@ static bool waiter_clean_table(void) {
         }
     }
     
-
-        mutex_unlock(&thread1.procMutex);       //incase there was not more than  4 dirty tables
         return true;
 
 
@@ -222,9 +218,9 @@ static bool waiter_seat_customer(void) {
         }
     }
 
-    i=mutex_lock_interruptible(&thread1.procMutex);  
     if (num >= c->group_count) { // if it does
         // seatem
+	i=mutex_lock_interruptible(&thread1.procMutex);  
         waiter_state=LOADING;
         for (i = 0; seated < c->group_count; i++) {
             if (stool[8*(current_table-1) + i].status == 'C') {
@@ -245,9 +241,8 @@ static bool waiter_move_table(void) {
         waiter_state=MOVING;
         current_table++;
         if (current_table == 5) {
-            current_table = 1; 
+            current_table = 1;
         }
-    
 
     return true;
 }
@@ -255,9 +250,9 @@ static bool waiter_move_table(void) {
 static int waiter_brain(void * data) {
 
     // struct thread_parameter *parm = data;
-    
+
     while (!kthread_should_stop()) {
-       
+
     // we will call locks inside of fucntion that way it will be easier and it wont have to wait to be ublocked after msleep()
         // move table
         if (waiter_move_table()) {
@@ -414,7 +409,7 @@ static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_
     }
 
     sprintf(msg, "%sNumber of customers serviced: %i\n\n\n", msg, serviced_customers);
-    
+
     i=mutex_lock_interruptible(&(thread1.procMutex));
     for (i = 4; i >= 1; i--) {
         strcpy(s3, (current_table == i) ? "[*]" : "[ ]");
@@ -456,9 +451,9 @@ static ssize_t procfile_write(struct file* file, const char * ubuf, size_t count
 		procfs_buf_len = count;
     }
 
-    // i=mutex_lock_interruptible(&thread1.procMutex);
+//     	i=mutex_lock_interruptible(&thread1.procMutex);
 	i = copy_from_user(msg, ubuf, procfs_buf_len);
-   // mutex_lock(&thread1.procMutex);
+//	 mutex_lock(&thread1.procMutex);
 
 	return procfs_buf_len;
 }
@@ -481,8 +476,8 @@ int initialize_bar(void) {
         return -1;
     }
 
-    OPEN = true;
-    waiter_state = IDLE;
+   OPEN = true;
+   waiter_state = IDLE;
 	ktime_get_real_ts64(&time);
     current_table = 1;
     occupancy = 0;
