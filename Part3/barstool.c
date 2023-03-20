@@ -69,7 +69,7 @@ static Place stool[32];
 
 static bool waiter_toss_customer(void) {
     int req_time;
-    int i;
+    int i,j;
     Customer *c;
     bool removed = false;
     struct timespec64 ctime;
@@ -100,7 +100,7 @@ static bool waiter_toss_customer(void) {
             // if they've had enough time
             if (ctime.tv_sec - c->time.tv_sec >= req_time) {
                 removed = true;
-                   mutex_lock_interruptible(&thread1.procMutex); 
+                j=mutex_lock_interruptible(&thread1.procMutex); 
                 stool[8*(current_table-1) + i].status = 'D';
                 // once the customer leaves the chair, they are dead to us.
 	           mutex_unlock(&thread1.procMutex);
@@ -516,7 +516,7 @@ int customer_arrival(int number_of_customers, int type) {
         printk(KERN_INFO "invalid customer amount %i\n", number_of_customers);
         return 1;
     }
-    
+
     switch (type) {
         case 0:
             c = 'F';
