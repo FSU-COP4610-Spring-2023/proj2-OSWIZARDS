@@ -24,6 +24,8 @@ static int procfs_buf_len;
 
 static bool OPEN;
 static struct timespec64 time;
+int prevTime;
+
 enum states {OFFLINE, IDLE, LOADING, CLEANING, MOVING};
 static enum states waiter_state;
 static int current_table,
@@ -178,18 +180,19 @@ static void addQueue(char type, int num) {
 
 }
 
-static int deleteQueue(void) {
-    Customer *c;
+static Customer*  deleteQueue(void) {
+    Customer *c, *temp;
     int amt;
 
 	if (list_empty(&Queue)) //if empty
-		return -1;
+		return NULL;
 
     /* even though the func is only used by waiter we want to lock to make sure main process is not
         accessing shared resources and editing such as "adding someone to queue" */
     if(mutex_lock_interruptible(&(thread1.queueMutex))==0){
         c = list_first_entry(&Queue, Customer, list);
         amt = c->group_count;
+        temp=c;
         list_del(&c->list);
 
         queue_group_num--;
@@ -197,7 +200,7 @@ static int deleteQueue(void) {
     }
     mutex_unlock(&(thread1.queueMutex));	
 
-	return 0;
+	return temp;
 }
 
 static bool waiter_seat_customer(void) {
@@ -215,13 +218,15 @@ static bool waiter_seat_customer(void) {
             	num++; 
         }
     }
+    if(queue_group_num==0)
+        return false;
 
     if (num >= c->group_count) { // if it does
         // seatem
 	i=mutex_lock_interruptible(&thread1.procMutex);  
-        waiter_state=LOADING;
         for (i = 0; seated < c->group_count; i++) {
             if (stool[8*(current_table-1) + i].status == 'C') {
+                 waiter_state=LOADING;
                 stool[8*(current_table-1) + i].status = c->type;
                 stool[8*(current_table-1) + i].occupant = c;
                 seated++; 
@@ -232,6 +237,7 @@ static bool waiter_seat_customer(void) {
         deleteQueue();                          // while in the function we lock it to make sure no one else its editing queue
         return true;
     }
+
     return false;
 }
 
@@ -322,7 +328,7 @@ static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_
     struct timespec64 ctime;
     // struct list_head* temp;
 
-    int i1, i, fr=0, so=0, ju=0, se=0, pr=0, c_id, j;
+    int  i, fr=0, so=0, ju=0, se=0, pr=0, c_id, j;
     Customer *c;
 
     switch(waiter_state){
@@ -344,12 +350,16 @@ static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_
         default:
             strcpy(s1, "ERROR");
     }
+    if(waiter_state!=OFFLINE)
+    {   ktime_get_real_ts64(&ctime);
+        prevTime = ctime.tv_sec - time.tv_sec;
+        if (ctime.tv_nsec >= 500000000) 
+            prevTime++;
+    }
 
-    ktime_get_real_ts64(&ctime);
-    i1 = ctime.tv_sec - time.tv_sec;
-    if (ctime.tv_nsec >= 500000000) 
-        i1++;
 
+
+    
     if (occupancy == 0) {
         strcpy(s2, "Empty");
     }
@@ -378,7 +388,7 @@ static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_
         sprintf(s2, "Fr: %i | So: %i | Ju: %i | Se: %i | Pr: %i", fr, so, ju, se, pr);
     }
 
-    sprintf(msg, "Waiter state: %s\nCurrent table: %i\nElapsed time: %i seconds\nCurrent occupancy: %i\n", s1, current_table, i1, occupancy);
+    sprintf(msg, "Waiter state: %s\nCurrent table: %i\nElapsed time: %i seconds\nCurrent occupancy: %i\n", s1, current_table, prevTime, occupancy);
     sprintf(msg, "%sBar status: %s\nNumber of customers waiting: %i\nNumber of groups waiting: %i\n", msg, s2, queue_customer_num, queue_group_num);
     sprintf(msg, "%sContents of queue:\n", msg);
     
@@ -420,9 +430,6 @@ static ssize_t procfile_read(struct file* file, char * ubuf, size_t count, loff_
     mutex_unlock(&thread1.procMutex);
 
 
-    if (DEBUG) {
-        sprintf(msg, "%sMost recent addition to queue:\n\ttype: %c group_count: %i group_id: %i\n", msg, last_customer.type, last_customer.group_count, last_customer.group_id);
-    }
 
     procfs_buf_len = strlen(msg);
 	if (*ppos > 0 || count < procfs_buf_len) {
@@ -550,6 +557,7 @@ int customer_arrival(int number_of_customers, int type) {
 extern int (*STUB_close_bar)(void);
 int close_bar(void) {
     int i;
+    Customer * temp;
 
     if (OPEN == true) {
         OPEN = false;
@@ -559,7 +567,9 @@ int close_bar(void) {
     }
 
     while (!list_empty(&Queue))
-        deleteQueue();
+    {   temp = deleteQueue();
+        kfree(temp);
+    }
 
     if(isNotClean())
         cleanBar();
