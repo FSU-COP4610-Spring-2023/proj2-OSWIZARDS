@@ -3,8 +3,13 @@ Please view this readme in RAW format! It's prettier!
 
 Group Members: Pietro Candiani, Mattan Peleah, Judas Smith
 
-To compile and run the executable: 
-    make
+Make instructions:
+    part 1:
+        make, then view the .trace files generated
+    part 2:
+        make, then insmod my_timer.ko
+    part 3: 
+        make, then insmod barstool.ko, then to initialize or close bar use consumer, to spawn customers use producer
     
 None of the rust extra credit was completed. 
 
@@ -35,7 +40,6 @@ Files:
         Makefile    - makes barstool, consumer, and producer
         barstool.c  - contains main logic of program
         sys_call.c  - syscalls
-        wrappers.h  - related /\
+        wrappers.h  - provided file
         consumer.c  - provided file
         producer.c  - provided file
-        refre.sh    - for internal use, removes and inserts barstool.ko
