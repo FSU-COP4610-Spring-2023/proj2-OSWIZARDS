@@ -17,7 +17,7 @@ MODULE_LICENSE("Dual BSD/GPL");
 
 // TODO: possible issue with too many entries in queue pushing over char limit
 // len w no queue: ~400 ch, each group in queue ~50 ch
-#define BUF_LEN 1000
+#define BUF_LEN 1048576
 static struct proc_dir_entry* proc_entry;
 static char msg[BUF_LEN];
 static int procfs_buf_len;
@@ -73,7 +73,6 @@ static bool waiter_toss_customer(void) {
     Customer *c;
     bool removed = false;
     struct timespec64 ctime;
-    //mutex_lock_interruptible(&thread1.procMutex); 
 
     for (i = 0; i < 8; i++) {
         req_time = -1;
@@ -153,7 +152,7 @@ static bool waiter_clean_table(void) {
 
 }
 
-static int addQueue(char type, int num) {
+static void addQueue(char type, int num) {
     int group_id = groups_encountered;
 
 
@@ -177,7 +176,6 @@ static int addQueue(char type, int num) {
         mutex_unlock(&(thread1.queueMutex));
     }
 
-    return 1;
 }
 
 static int deleteQueue(void) {
@@ -601,7 +599,7 @@ static int barstool_init(void) {
 	if (proc_entry == NULL) {
 		return -ENOMEM;
     }
-    
+
     return 0;
 }
 
